@@ -1,6 +1,6 @@
 clear all; close all; clc;
 
-addpath('/Users/louisjouret/Documents/GitHub/ADCS_LouisJouret/casadi-matlabR2015a-v3.3.0')
+addpath('/home/lukas/Code/adcs_chess/matlab/casadi-linux-octave-5.2.0-v3.5.5')
 import casadi.*
 
 %%

@@ -76,3 +76,5 @@ def plot_mpc(t, X_log, U_log):
     ax.set_xlabel("Time [s]")
     ax.set_ylabel("Kinetic Energy")
 
+    # In case it's launched from the command line
+    breakpoint()

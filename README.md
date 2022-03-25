@@ -27,5 +27,10 @@ pip install -r requirements.txt
 ```
 
 # How to Use
+Since there is no local setup of the library, make sure you start everything within the `python` folder, e.g.,:
+
+``` bash
+python mpc_random_sampler.py
+```
 
 

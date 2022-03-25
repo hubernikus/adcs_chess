@@ -129,4 +129,4 @@ dmypy.json
 .pyre/
 
 # Casadi Library
-matlab/casadi-*
+matlab/casadi*

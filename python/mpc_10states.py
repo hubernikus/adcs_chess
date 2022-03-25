@@ -1,13 +1,5 @@
-# clear all; close all; clc;
-
-# addpath('/Users/louisjouret/Documents/GitHub/ADCS_LouisJouret/casadi-matlabR2015a-v3.3.0')
-
 import numpy as np
-import matplotlib.pyplot as plt
-
-# import casa
 from casadi import *
-
 
 def main():
     dimensions = 3
@@ -23,32 +15,38 @@ def main():
     ##
     x = MX.sym("x", 10)
     u = MX.sym("u", 3)
+
+    ode = MX.sym("ode", 10)
+    # ode = [None]*10
     
-    ode = [
-        0.5 * (-x[1] * x[4] - x[2] * x[5] - x[3] * x[6]),  # q1
-        0.5 * (x[0] * x[4] + x[3] * x[5] - x[2] * x[6]),  # q2
-        0.5 * (-x[3] * x[4] + x[0] * x[5] + x[1] * x[6]),  # q3
-        0.5 * (x[2] * x[4] - x[1] * x[5] + x[0] * x[6]),  # q4
-        (1 / Is1)
+    # Quaternion
+    ode[0] = 0.5 * (-x[1] * x[4] - x[2] * x[5] - x[3] * x[6])
+    ode[1] = 0.5 * (x[0] * x[4] + x[3] * x[5] - x[2] * x[6])
+    ode[2] = 0.5 * (-x[3] * x[4] + x[0] * x[5] + x[1] * x[6])
+    ode[3] = 0.5 * (x[2] * x[4] - x[1] * x[5] + x[0] * x[6])
+
+    # Angular Velocity
+    ode[4] = ((1 / Is1) 
         * (
             (Is2 - Is3) * x[6] * x[5] - x[5] * x[9] + x[6] * x[8] + b * x[7] - Km * u[0]
-        ),  # w1
-        (1 / Is2)
-        * (
-            (Is3 - Is1) * x[4] * x[6] - x[6] * x[7] + x[4] * x[9] + b * x[8] - Km * u[1]
-        ),  # w2
-        (1 / Is3)
-        * (
-            (Is1 - Is2) * x[5] * x[4] - x[4] * x[8] + x[5] * x[7] + b * x[9] - Km * u[2]
-        ),  # w3
-        (1 / Iw) * (Km * u[0] - b * x[7]),  # ww1
-        (1 / Iw) * (Km * u[1] - b * x[8]),  # ww2
-        (1 / Iw) * (Km * u[2] - b * x[9]), # ww3
-    ]  
+        ))
+    ode[5] = ((1 / Is2)
+             * ((Is3 - Is1) * x[4] * x[6] - x[6] * x[7] + x[4] * x[9] + b * x[8] - Km * u[1])
+             )
+    ode[6] = ((1 / Is3)
+             * ((Is1 - Is2) * x[5] * x[4] - x[4] * x[8] + x[5] * x[7] + b * x[9] - Km * u[2])
+             )
 
+    # Angular Acceleration
+    ode[7] = ((1 / Iw) * (Km * u[0] - b * x[7]))
+    ode[8] = ((1 / Iw) * (Km * u[1] - b * x[8]))
+    ode[9] = ((1 / Iw) * (Km * u[2] - b * x[9]))
+    
     # f = Function("f", {x, u}, {ode}, {"x", "u"}, {"ode"})
-    f = Function("f", [x, u], ode, ["x", "u"], ["ode"])
-
+    f = Function("f", [x, u], [ode], ["x", "u"], ["ode"])
+    breakpoint()
+    # f = Function("f", [x, u], ode, ["x", "u"], [f"ode{ii}" for ii in range(len(ode))])
+    
     # Time horizon
     T = 1
 
@@ -61,15 +59,17 @@ def main():
     ## casadi variable definition
 
     # Integrator to discretize the system
-    intg_options = struct
-    intg_options.tf = T / N
-    intg_options.number_of_finite_elements = 4
+    intg_options = {"tf": T / N, "number_of_finite_elements": 4}
 
     # DAE problem structure
-    dae = struct
-    dae.x = x  # What are states?
-    dae.p = u  # What are parameters (=fixed during the integration horizon)?
-    dae.ode = f(x, u)  # Expression for the right-hand side
+    dae = {
+        # What are states?
+        "x": x,
+        # What are parameters (=fixed during the integration horizon)?
+        "p": u,
+        # Expression for the right-hand side
+        "ode": f(x, u),  
+        }
 
     intg = integrator("intg", "rk", dae, intg_options)
     res = intg("x0", x, "p", u)  # Evaluate with symbols

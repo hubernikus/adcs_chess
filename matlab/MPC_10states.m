@@ -16,7 +16,7 @@ Km  = 0.03;         % motor constant
 x = MX.sym('x',10);
 u = MX.sym('u',3);
 
-ode= [      0.5*(-x(2)*x(5) - x(3)*x(6) - x(4)*x(7));   % q1
+ode = [      0.5*(-x(2)*x(5) - x(3)*x(6) - x(4)*x(7));   % q1
             0.5*(x(1)*x(5) + x(4)*x(6) - x(3)*x(7));    % q2
             0.5*(-x(4)*x(5) + x(1)*x(6) + x(2)*x(7));   % q3
             0.5*(x(3)*x(5) - x(2)*x(6) + x(1)*x(7));    % q4
@@ -29,6 +29,12 @@ ode= [      0.5*(-x(2)*x(5) - x(3)*x(6) - x(4)*x(7));   % q1
 
 
 f = Function('f',{x,u},{ode},{'x','u'},{'ode'});
+
+if (true)
+  disp(ode)
+  disp(x)
+  return
+end
 
 
 T   = 1;    % Time horizon

@@ -1,10 +1,30 @@
+""" Library creating and MPC-environment using Casadi."""
+# Author: Lukas Huber
+#    (based on MATLAB script by Louis Journet)  
+# Created: 2022-03-15
+# Email: lukas.huber@epfl.ch
+
+import matplotlib.pyplot as plt
+
 import numpy as np
+
 from casadi import *
 
-def main():
+def main(T=1, N=10, time=15):
+    """
+    Inputs
+    ------
+    T: Time horizon
+    N: Number of control intervals
+    time: Time simulated in seconds
+
+    Returns
+    -------
+    [TODO]
+    """
     dimensions = 3
 
-    ##
+    # Physical properties of the system
     Is1 = 0.05  # inertia of x axis
     Is2 = 0.05  # inertia of y axis
     Is3 = 0.025  # inertia of z axis
@@ -12,13 +32,16 @@ def main():
     b = 6 * 10 ** (-6)  # motor friction constant
     Km = 0.03  # motor constant
 
-    ##
-    x = MX.sym("x", 10)
-    u = MX.sym("u", 3)
-
-    ode = MX.sym("ode", 10)
-    # ode = [None]*10
+    size_x = 10
+    size_u = 3
+    size_dx = size_x
     
+    ##
+    x = MX.sym("x", size_x)
+    u = MX.sym("u", size_u)
+
+    ode = MX(size_dx, 1)
+    # ode = [None]*10
     # Quaternion
     ode[0] = 0.5 * (-x[1] * x[4] - x[2] * x[5] - x[3] * x[6])
     ode[1] = 0.5 * (x[0] * x[4] + x[3] * x[5] - x[2] * x[6])
@@ -41,21 +64,9 @@ def main():
     ode[7] = ((1 / Iw) * (Km * u[0] - b * x[7]))
     ode[8] = ((1 / Iw) * (Km * u[1] - b * x[8]))
     ode[9] = ((1 / Iw) * (Km * u[2] - b * x[9]))
-    
-    # f = Function("f", {x, u}, {ode}, {"x", "u"}, {"ode"})
+
     f = Function("f", [x, u], [ode], ["x", "u"], ["ode"])
-    breakpoint()
-    # f = Function("f", [x, u], ode, ["x", "u"], [f"ode{ii}" for ii in range(len(ode))])
     
-    # Time horizon
-    T = 1
-
-    # Number of control intervals
-    N = 10
-
-    # Time simulated in seconds
-    time = 15
-
     ## casadi variable definition
 
     # Integrator to discretize the system
@@ -68,17 +79,17 @@ def main():
         # What are parameters (=fixed during the integration horizon)?
         "p": u,
         # Expression for the right-hand side
-        "ode": f(x, u),  
+        "ode": f(x, u),
         }
 
     intg = integrator("intg", "rk", dae, intg_options)
-    res = intg("x0", x, "p", u)  # Evaluate with symbols
+    # res = intg("x0", x, "p", u)  # Evaluate with symbols
+    res = intg(x0=x, p=u)  # Evaluate with symbols
     
-    x_next = res.xf
+    x_next = res['xf']
     F = Function("F", [x, u], [x_next], ["x", "u"], ["x_next"])
 
     ## optimization loop
-
     opti = casadi.Opti()
     x = opti.variable(10, N + 1)  # Decision variables for state trajectory
     u = opti.variable(3, N)
@@ -95,22 +106,27 @@ def main():
         opti.subject_to(x[:, k + 1] == F(x[:, k], u[:, k]))
 
         # compute cost function
-        J = J + Q * ((x[1:, k] - ref).T * (x[:3, k] - ref))
-        J = J + 0.001 * Q * (x[5:, k].T * x[5:, k])
-        J = J + R * u[:, k].T * u[:, k]
+        J = J + Q * ((x[:4, k] - ref).T @ (x[:4, k] - ref))
+        J = J + 0.001 * Q * (x[5:, k].T @ x[5:, k])
+        J = J + R * u[:, k].T @ u[:, k]
 
     opti.minimize(J)
-    opti.subject_to(-5 <= u <= 5)
+    # opti.subject_to(-5 <= u)
+    # opti.subject_to(-5 <= u <= 5)
+    # opti.subject_to(opti.bounded(-5, vec(u), 5))
+    opti.subject_to(opti.bounded(-5, u, 5))
+    
     opti.subject_to(x[:, 0] == p)
     opti.solver("ipopt")
 
     ## log arrays
+    n_steps = int(time * (N / T))
     X_log = []
     U_log = []
     J_log = []
 
     ## initial values and reference
-    x_new = [0, 1, 0, 0, 0, 0, 0, 0, 0, 0]
+    x_new = np.array([0, 1, 0, 0, 0, 0, 0, 0, 0, 0])
     reference = [1, 0, 0, 0]
 
     ##
@@ -118,94 +134,103 @@ def main():
     opti.set_value(u_old, np.zeros(dimensions))
     opti.set_value(ref, reference)
 
-    X_log[:, 0] = x_new
-
+    X_log.append(x_new)
+    U_log.append(np.zeros(size_u))
+    
     Kwd = 1 * np.eye(dimensions)
 
-    for i in range(time * (N / T)):
+    for i in range(n_steps):
         print(i * T)
         sol = opti.solve()
         # u_new   = sol.value(u(:, 1));
         u_new = sol.value(u[:, 0])
         x_new = F(x_new, u_new)
-        x_new = full(x_new)
-        X_log[:, i + 1] = x_new
-        U_log[:, i] = u_new
+        # x_new = full(x_new)
+        X_log.append(np.squeeze(x_new))
+        U_log.append(np.squeeze(u_new))
 
         opti.set_value(p, x_new)
         opti.set_value(u_old, u_new)
         opti.set_value(ref, reference)
 
-    ## Plotting
+    X_log = np.array(X_log).T
+    U_log = np.array(U_log).T
+
+    t = np.linspace(0, time, n_steps+1)
+    
+    return t, X_log, U_log
+
+
+def plot_helper_legend_ticks(axs, x_lim):
+    for ii, ax in enumerate(axs):
+        ax.legend()
+        ax.set_xlim(x_lim)
+
+        if ii != len(axs)-1:
+            ax.axes.xaxis.set_visible(False)
+    
+def plot_mpc(t, X_log, U_log):
+    plt.ion()
+    plt.close('all')
+    
     # plot the angular velocity
-    t = np.linspace(0, time, 1 + time * (N / T))
-
-    # f = figure('visible','on')
     fig, axs = plt.subplots(3, 1)
-    # subplot(3,1,1)
     axs[0].plot(t, X_log[4, :], label="w1")
-    # subplot(3,1,2)
-    axs[0].plot(t, X_log[5, :], label="w2")
-    # subplot(3,1,3)
-    axs[0].plot(t, X_log[6, :], label="w3")
-    axs[0].set_xlabel("Time [s]")
-
-    # plot the quaternions
-    # l = figure('visible','on')
-    # subplot(4,1,1)
-    fig, axs = plt.subplot(4, 1)
-    axs[0].plot(t, X_log[0, :])
-    # legend('q0')
-    # subplot(4,1,2)
-    axs[1].plot(t, X_log[1, :])
-    # legend('q1')
-    # subplot(4,1,3)
-    axs[2].plot(t, X_log[2, :])
-    # legend('q2')
-    # subplot(4,1,4)
-    axs[3].plot(t, X_log[3, :])
-
-    # legend('q3')
-    axs[3].set_xlabel("Time [s]")
-
-    # plot the speed of the reaction wheels
-    # g = figure('visible','on')
-    fig, axs = plt.subplots(3, 1)
-    axs[0].plot(t, X_log[7, :])
-    # legend('ww1')
-    # subplot(3,1,2)
-    axs[1].plot(t, X_log[8, :])
-    # legend('ww2')
-    # subplot(3,1,3)
-    axs[2].plot(t, X_log[9, :])
-    # legend('ww3')
+    axs[1].plot(t, X_log[5, :], label="w2")
+    axs[2].plot(t, X_log[6, :], label="w3")
+    
+    plot_helper_legend_ticks(axs, [t[0], t[-1]])
     axs[2].set_xlabel("Time [s]")
 
-    # plot the inputs
-    # t(:,1) = []
-    # h = figure('visible','on')
+    # Plot the quaternions
+    fig, axs = plt.subplots(4, 1)
+    axs[0].plot(t, X_log[0, :], label="q0")
+    axs[1].plot(t, X_log[1, :], label="q1")
+    axs[2].plot(t, X_log[2, :], label="q2")
+    axs[3].plot(t, X_log[3, :], label="q3")
+
+    plot_helper_legend_ticks(axs, [t[0], t[-1]])
+    axs[3].set_xlabel("Time [s]")
+
+    # Plot the speed of the reaction wheels
     fig, axs = plt.subplots(3, 1)
-    # subplot(3, 1, 1)
-    axs[0].stairs(t, U_log[0, :], label="u1")
-    # subplot(3, 1, 2)
-    axs[1].stairs(t, U_log[1, :], label="u2")
-    # subplot(3, 1, 3)
-    axs[2].stairs(t, U_log[2, :], label="u3")
-    axs[2].legent()
-    axs[2].set_xlabel("time [s]")
+    axs[0].plot(t, X_log[7, :], label="dw1")
+    axs[1].plot(t, X_log[8, :], label="dw2")
+    axs[2].plot(t, X_log[9, :], label="dw3")
+
+    plot_helper_legend_ticks(axs, [t[0], t[-1]])
+    axs[2].set_xlabel("Time [s]")
+
+    # Plot the inputs
+    fig, axs = plt.subplots(3, 1)
+    # axs[0].plot(t[:], U_log[0, :], label="u1")
+    # axs[1].plot(t[:], U_log[1, :], label="u2")
+    # axs[2].plot(t[:], U_log[2, :], label="u3")
+
+    axs[0].stairs(U_log[0, :-1],  t[:], label="u1")
+    axs[1].stairs(U_log[1, :-1], t[:], label="u2")
+    axs[2].stairs(U_log[2, :-1], t[:] , label="u3")
+
+    for ax in axs:
+        ax.set_ylim([-1, 1])
+    
+    plot_helper_legend_ticks(axs, [t[1], t[-1]])
+    axs[2].set_xlabel("Time [s]")
+    breakpoint()
 
     # Plot the kinetic energy
     W = X_log[5:8, :]
     W = W**2
     W = np.sum(W, axis=0)
     W = np.sqrt(W)
-    # k = figure('visible','on')
 
-    fig, ax = ax.subplots()
-    ax.plot(W)
-    ax.set_xlabel("time [s]")
+    fig, ax = plt.subplots()
+    ax.plot(t, W)
+    ax.set_xlim(t[0], t[-1])
+    ax.set_xlabel("Time [s]")
     ax.set_ylabel("Kinetic Energy")
 
 
 if (__name__) == "__main__":
-    main()
+    # t, X_log, U_log = main(T=1, N=10, time=15)
+    plot_mpc(t, X_log, U_log)

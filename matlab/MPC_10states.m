@@ -1,6 +1,6 @@
 clear all; close all; clc;
 
-addpath('/home/lukas/Code/adcs_chess/matlab/casadi-linux-octave-5.2.0-v3.5.5')
+addpath('/home/lukas/Code/adcs_chess/matlab/casadi')
 import casadi.*
 
 %%
@@ -29,13 +29,6 @@ ode = [      0.5*(-x(2)*x(5) - x(3)*x(6) - x(4)*x(7));   % q1
 
 
 f = Function('f',{x,u},{ode},{'x','u'},{'ode'});
-
-if (true)
-  disp(ode)
-  disp(x)
-  return
-end
-
 
 T   = 1;    % Time horizon
 N   = 10;   % Number of control intervals

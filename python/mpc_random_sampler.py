@@ -3,10 +3,13 @@
 #    (based on MATLAB script by Louis Journet)  
 # Created: 2022-03-15
 # Email: lukas.huber@epfl.ch
-import matplotlib.pyplot as plt
+import datetime
+import csv
 
 import numpy as np
 from numpy import linalg as LA
+
+from scipy.spatial.transform import Rotation
 
 # For maximum MATLAB compatibility, we keep this for the moment open. 
 from casadi import *
@@ -16,12 +19,29 @@ from visualization_utils import plot_mpc
 
 
 class RandomizerMPC:
+    quaternion_range = [0, 1]
+    # ang_vel_max = 5
+    # ang_acc_max = 5
+    # OR -> angle = [-pi, pi] + vector = [1, 1, 1]
+    
+    # Angular Velocity & Angular Acceleration
+    angular_velocity_range = [-5, 5]
+    angular_acceleration_range = [-5, 5]
+    
     def __init__(self, T=1, N=10, time=15):
         self.T = T
         self.N = N
         self.time = time
         
         self.dimensions = 3
+        
+        self.size_x = 10
+        self.size_u = 3
+        self.size_dx = self.size_x
+
+        self.setup()
+
+    def setup(self):
         # Physical properties of the system
         Is1 = 0.05  # inertia of x axis
         Is2 = 0.05  # inertia of y axis
@@ -30,15 +50,12 @@ class RandomizerMPC:
         b = 6 * 10 ** (-6)  # motor friction constant
         Km = 0.03  # motor constant
 
-        self.size_x = 10
-        self.size_u = 3
-        self.size_dx = self.size_x
-
-        ##
+        ## 
         x = MX.sym("x", self.size_x)
         u = MX.sym("u", self.size_u)
 
         ode = MX(self.size_dx, 1)
+        
         # ode = [None]*10
         # Quaternion
         ode[0] = 0.5 * (-x[1] * x[4] - x[2] * x[5] - x[3] * x[6])
@@ -68,7 +85,7 @@ class RandomizerMPC:
         ## casadi variable definition
 
         # Integrator to discretize the system
-        intg_options = {"tf": T / N, "number_of_finite_elements": 4}
+        intg_options = {"tf": self.T / self.N, "number_of_finite_elements": 4}
 
         # DAE problem structure
         dae = {
@@ -89,9 +106,13 @@ class RandomizerMPC:
 
         ## optimization loop
         opti = casadi.Opti()
-        self.x = opti.variable(10, N + 1)  # Decision variables for state trajectory
-        self.u = opti.variable(3, N)
-        self.p = opti.parameter(10, 1)  # Parameter (not optimized over)
+
+        # Decision variables for state trajectory
+        self.x = opti.variable(10, self.N + 1)  
+        self.u = opti.variable(3, self.N)
+        
+        # Parameter (not optimized over)
+        self.p = opti.parameter(10, 1)  
         self.ref = opti.parameter(4, 1)
         self.u_old = opti.parameter(3, 1)
 
@@ -100,7 +121,7 @@ class RandomizerMPC:
 
         J = 0
 
-        for k in range(N):
+        for k in range(self.N):
             opti.subject_to(self.x[:, k + 1] == self.F(self.x[:, k], self.u[:, k]))
 
             # compute cost function
@@ -117,7 +138,7 @@ class RandomizerMPC:
         # Store optimizer as attribute for future computation
         self.opti = opti
         
-    def optimize_once(self, start_position, start_reference):
+    def optimize_and_integrate(self, start_position, start_reference):
         x_new = start_position
         reference = start_reference
         
@@ -127,6 +148,8 @@ class RandomizerMPC:
 
         ## Log arrays
         n_steps = int(self.time * (self.N / self.T))
+        print(f"Number of steps: {n_steps}.")
+        
         X_log = []
         U_log = []
         J_log = []
@@ -137,7 +160,7 @@ class RandomizerMPC:
         Kwd = 1 * np.eye(self.dimensions)
 
         for i in range(n_steps):
-            print(i * self.T)
+            print(f"Time: {i * self.T}")
             sol = self.opti.solve()
             
             # u_new   = sol.value(u(:, 1));
@@ -153,7 +176,6 @@ class RandomizerMPC:
             self.opti.set_value(self.ref, reference)
 
         # Set and store values for plotting and saving to file
-        
         self.t = np.linspace(0, self.time, n_steps+1)
         
         self.x_log = np.array(X_log).T
@@ -162,16 +184,58 @@ class RandomizerMPC:
     def plot(self):
         plot_mpc(t=self.t, X_log=self.x_log, U_log=self.u_log)
 
-    def do_random_runs(self):
-        pass
+    def do_random_runs(self, n_points=3, save_to_file=True, filename=None):
+        """ Method which creates random samples in ranges and stores it to csv-fle."""
 
+        if filename is None:
+            now = datetime.datetime.now()
+            filename = f"mpc_learning_{now:%Y-%m-%d_%H-%M-%S}" + ".csv"
+
+        writer = csv.writer(open(filename, 'w'))
+        writer.writerow(["q0", "q1", "q2", "q3", "w0", "w1", "w2", "a0", "a1", "a2", "u0", "u1", "u2", "u3"])
+            
+        # Create header
+        for ii in range(n_points):
+            quat_random = Rotation.random().as_quat()
+            
+            angular_vel = (
+                np.random.rand(3)*(self.angular_velocity_range[1]
+                             - self.angular_velocity_range[0])
+                + self.angular_velocity_range[0]
+            )
+
+            angular_acc = (
+                np.random.rand(3)*(
+                    self.angular_acceleration_range[1]
+                    - self.angular_acceleration_range[0]
+                ) + self.angular_acceleration_range[0]
+            )
+
+            x_new = np.hstack((quat_random, angular_vel, angular_acc))
+
+            # TODO: should desired reference be closed point(?)
+            start_reference = [1, 0, 0, 0]
+            self.opti.set_value(self.p, x_new)
+            self.opti.set_value(self.u_old, np.zeros(self.dimensions))
+            self.opti.set_value(self.ref, start_reference)
+
+            # Solve system
+            sol = self.opti.solve()
+            u_new = sol.value(self.u[:, 0])
+
+            # Write to file
+            writer.writerow(np.hstack((x_new, u_new)))
+            
 
 if (__name__) == "__main__":
     my_sampler = RandomizerMPC()
+    my_sampler.do_random_runs(save_to_file=True)
+    print("\n\n\n")
+    print("Writing finished. \n\n\n")
     
-    my_sampler.optimize_once(
-        start_position=np.array([0, 1, 0, 0, 0, 0, 0, 0, 0, 0]),
-        start_reference=[1, 0, 0, 0],
-    )
-    my_sampler.plot()
+    # my_sampler.optimize_and_integrate(
+        # start_position=np.array([0, 1, 0, 0, 0, 0, 0, 0, 0, 0]),
+        # start_reference=[1, 0, 0, 0],
+    # )
+    # my_sampler.plot()
 
